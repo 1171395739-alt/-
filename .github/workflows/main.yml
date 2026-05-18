@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>智能发票分析工具 | OCR识别 | 合并统计 | 可视化报表</title>
+    <!-- TailwindCSS + Font Awesome + ECharts + Tesseract + XLSX -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <style>
+        /* 自定义滚动条和过渡效果 */
+        body {
+            background: #f3f4f6;
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+        .card-hover {
+            transition: all 0.2s ease;
+        }
+        .card-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 20px 25px -12px rgba(0, 0, 0, 0.1);
+        }
+        .ocr-progress {
+            transition: width 0.3s ease;
+        }
+        .table-container::-webkit-scrollbar {
+            height: 6px;
+            width: 6px;
+        }
+        .table-container::-webkit-scrollbar-track {
+            background: #e5e7eb;
+            border-radius: 8px;
+        }
+        .table-container::-webkit-scrollbar-thumb {
+            background: #9ca3af;
+            border-radius: 8px;
+        }
+        input, select {
+            transition: all 0.2s;
+        }
+        input:focus, select:focus {
+            ring: 2px solid #3b82f6;
+            border-color: #3b82f6;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        }
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #16355f 0%, #1f4280 100%);
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- 头部 -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+        <div>
+            <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-800 to-indigo-700 bg-clip-text text-transparent">
+                <i class="fas fa-file-invoice-dollar text-indigo-600 mr-2"></i> 智眸发票管家
+            </h1>
+            <p class="text-gray-500 mt-1">OCR智能识别 · 多票合并统计 · 分类透视 · 一键导出</p>
+        </div>
+        <div class="flex gap-3 flex-wrap">
+            <button id="exportExcelBtn" class="bg-green-600 hover:bg-green-700 text-white px-5 py-2.5 rounded-xl shadow-md transition flex items-center gap-2"><i class="fas fa-file-excel"></i> 导出 Excel</button>
+            <button id="addMockDataBtn" class="bg-gray-600 hover:bg-gray-700 text-white px-5 py-2.5 rounded-xl shadow-md transition flex items-center gap-2"><i class="fas fa-database"></i> 示例数据</button>
+        </div>
+    </div>
+
+    <!-- 上传卡片 -->
+    <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100 card-hover">
+        <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+            <h2 class="text-xl font-semibold text-gray-800"><i class="fas fa-cloud-upload-alt text-blue-500 mr-2"></i> 上传发票 (图片/多张)</h2>
+            <span class="text-xs text-gray-400 bg-gray-100 px-3 py-1 rounded-full">支持 JPG, PNG | 自动OCR识别内容</span>
+        </div>
+        <div class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-blue-400 transition bg-gray-50/50" id="dropZone">
+            <i class="fas fa-upload text-4xl text-gray-400 mb-3"></i>
+            <p class="text-gray-600 mb-2">拖拽或点击选择图片文件 (可多选)</p>
+            <input type="file" id="fileInput" multiple accept="image/jpeg,image/jpg,image/png" class="hidden">
+            <button id="uploadBtn" class="mt-3 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg inline-flex items-center gap-2"><i class="fas fa-images"></i> 选择图片</button>
+            <div id="ocrProgressContainer" class="mt-4 hidden">
+                <div class="flex justify-between text-sm text-gray-600 mb-1"><span>识别进度</span><span id="ocrProgressText">0%</span></div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5"><div id="ocrProgressBar" class="bg-blue-600 h-2.5 rounded-full ocr-progress" style="width:0%"></div></div>
+                <p id="processingStatus" class="text-xs text-gray-500 mt-2"></p>
+            </div>
+        </div>
+        <div class="mt-3 text-xs text-gray-400 flex items-center gap-2"><i class="fas fa-info-circle"></i> 识别后可在表格内直接编辑修正所有字段 (金额、税额、日期、类型等)</div>
+    </div>
+
+    <!-- 统计卡片合并数据 -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+        <div class="bg-gradient-to-br from-indigo-50 to-white rounded-2xl shadow p-5 border-l-8 border-indigo-500">
+            <div class="flex items-center justify-between"><span class="text-gray-500 text-sm">📄 发票总份数</span><i class="fas fa-receipt text-indigo-400 text-xl"></i></div>
+            <p class="text-3xl font-bold text-gray-800 mt-2" id="totalCount">0</p>
+        </div>
+        <div class="bg-gradient-to-br from-emerald-50 to-white rounded-2xl shadow p-5 border-l-8 border-emerald-500">
+            <div class="flex items-center justify-between"><span class="text-gray-500 text-sm">💰 合并总金额 (合计)</span><i class="fas fa-coins text-emerald-400 text-xl"></i></div>
+            <p class="text-3xl font-bold text-gray-800 mt-2" id="totalAmount">0.00</p>
+        </div>
+        <div class="bg-gradient-to-br from-amber-50 to-white rounded-2xl shadow p-5 border-l-8 border-amber-500">
+            <div class="flex items-center justify-between"><span class="text-gray-500 text-sm">📊 合并总税额</span><i class="fas fa-calculator text-amber-400 text-xl"></i></div>
+            <p class="text-3xl font-bold text-gray-800 mt-2" id="totalTax">0.00</p>
+        </div>
+        <div class="bg-gradient-to-br from-rose-50 to-white rounded-2xl shadow p-5 border-l-8 border-rose-400">
+            <div class="flex items-center justify-between"><span class="text-gray-500 text-sm">📈 平均单张金额</span><i class="fas fa-chart-line text-rose-400 text-xl"></i></div>
+            <p class="text-3xl font-bold text-gray-800 mt-2" id="avgAmount">0.00</p>
+        </div>
+    </div>
+
+    <!-- 双图表区域: 饼图 + 趋势图 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div class="bg-white rounded-2xl shadow p-4">
+            <div class="flex justify-between items-center mb-2"><h3 class="font-semibold text-gray-700"><i class="fas fa-chart-pie text-purple-500"></i> 按类别金额占比 (专用/普通/其他)</h3><span class="text-xs text-gray-400">基于可编辑类型实时更新</span></div>
+            <div id="pieChart" style="height: 320px; width: 100%;"></div>
+        </div>
+        <div class="bg-white rounded-2xl shadow p-4">
+            <div class="flex justify-between items-center mb-2"><h3 class="font-semibold text-gray-700"><i class="fas fa-chart-line text-blue-500"></i> 月度金额趋势 (按开票年月)</h3><span class="text-xs text-gray-400">动态聚合月份</span></div>
+            <div id="lineChart" style="height: 320px; width: 100%;"></div>
+        </div>
+    </div>
+
+    <!-- 发票数据表格 (支持编辑/删除/新增行) -->
+    <div class="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-100">
+        <div class="px-6 py-4 bg-gray-50 border-b flex justify-between items-center flex-wrap gap-3">
+            <div class="flex items-center gap-2"><i class="fas fa-list-ul text-indigo-600"></i><span class="font-semibold text-gray-700">发票明细列表 (可编辑全部字段)</span><span class="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full">合并统计汇总视图</span></div>
+            <button id="addNewInvoiceBtn" class="bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-4 py-1.5 rounded-lg flex items-center gap-2 text-sm transition"><i class="fas fa-plus-circle"></i> 新增发票</button>
+        </div>
+        <div class="overflow-x-auto table-container">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">发票代码</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">发票号码</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">金额(¥)</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">税额(¥)</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">开票日期</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">发票类型</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="invoiceTableBody" class="divide-y divide-gray-100 bg-white">
+                    <!-- 动态渲染 -->
+                </tbody>
+            </table>
+        </div>
+        <div id="emptyTableMsg" class="text-center py-8 text-gray-400 hidden">暂无发票数据，请上传图片或点击“示例数据”体验</div>
+    </div>
+</div>
+
+<script>
+    // ---------- 全局数据 ----------
+    let invoices = [];        // 每个发票对象: { id, code, number, amount, tax, date, type, originalImg? }  // type: "增值税专用发票","增值税普通发票","其他"
+    let nextId = 1;
+    let pieChartInstance = null;
+    let lineChartInstance = null;
+
+    // 辅助函数: 格式化货币
+    const formatMoney = (val) => parseFloat(val).toFixed(2);
+    
+    // 更新统计卡片 & 图表 & 表格
+    function refreshAll() {
+        renderTable();
+        updateStatsAndCharts();
+    }
+
+    // 统计计算 (合并总金额/总税额/平均值)
+    function updateStatsAndCharts() {
+        const totalAmountVal = invoices.reduce((sum, inv) => sum + (parseFloat(inv.amount) || 0), 0);
+        const totalTaxVal = invoices.reduce((sum, inv) => sum + (parseFloat(inv.tax) || 0), 0);
+        const count = invoices.length;
+        document.getElementById('totalCount').innerText = count;
+        document.getElementById('totalAmount').innerText = totalAmountVal.toFixed(2);
+        document.getElementById('totalTax').innerText = totalTaxVal.toFixed(2);
+        document.getElementById('avgAmount').innerText = count ? (totalAmountVal / count).toFixed(2) : '0.00';
+        
+        // 更新饼图: 按发票类型聚合金额
+        const typeMap = new Map(); // key: 类型, value: 总金额
+        invoices.forEach(inv => {
+            let type = inv.type || "其他";
+            if (!type.includes("专用") && !type.includes("普通")) type = "其他";
+            let amt = parseFloat(inv.amount) || 0;
+            typeMap.set(type, (typeMap.get(type) || 0) + amt);
+        });
+        const pieData = Array.from(typeMap.entries()).map(([name, value]) => ({ name, value }));
+        if (pieChartInstance) {
+            pieChartInstance.setOption({
+                series: [{
+                    data: pieData,
+                    label: { show: true, formatter: '{b}: {d}%' }
+                }]
+            });
+        } else {
+            // 初始化已经在ready时调用
+        }
+        
+        // 月度趋势: 根据开票日期 按年月聚合总金额
+        const monthMap = new Map();
+        invoices.forEach(inv => {
+            let dateStr = inv.date;
+            if (dateStr && dateStr.trim() !== "") {
+                // 尝试解析 YYYY-MM-DD 或者 YYYY年MM月DD日 等多种
+                let yearMonth = null;
+                const isoMatch = dateStr.match(/(\d{4})-(\d{2})/);
+                if (isoMatch) yearMonth = `${isoMatch[1]}-${isoMatch[2]}`;
+                else {
+                    const cnMatch = dateStr.match(/(\d{4})[年-](\d{1,2})[月-]/);
+                    if (cnMatch) yearMonth = `${cnMatch[1]}-${cnMatch[2].padStart(2,'0')}`;
+                }
+                if (yearMonth) {
+                    let amt = parseFloat(inv.amount) || 0;
+                    monthMap.set(yearMonth, (monthMap.get(yearMonth) || 0) + amt);
+                }
+            }
+        });
+        const sortedMonths = Array.from(monthMap.keys()).sort();
+        const lineData = sortedMonths.map(m => monthMap.get(m));
+        if (lineChartInstance) {
+            lineChartInstance.setOption({
+                xAxis: { data: sortedMonths },
+                series: [{ data: lineData, name: '金额(元)', type: 'line' }]
+            });
+        } else {
+            // 初始化
+        }
+        // 如果无数据重置图表
+        if (invoices.length === 0) {
+            if (pieChartInstance) pieChartInstance.setOption({ series: [{ data: [] }] });
+            if (lineChartInstance) lineChartInstance.setOption({ xAxis: { data: [] }, series: [{ data: [] }] });
+        }
+    }
+    
+    // 渲染表格 (可编辑单元格)
+    function renderTable() {
+        const tbody = document.getElementById('invoiceTableBody');
+        const emptyMsg = document.getElementById('emptyTableMsg');
+        if (!invoices.length) {
+            tbody.innerHTML = '';
+            emptyMsg.classList.remove('hidden');
+            return;
+        }
+        emptyMsg.classList.add('hidden');
+        tbody.innerHTML = invoices.map(inv => `
+            <tr class="hover:bg-gray-50 transition" data-id="${inv.id}">
+                <td class="px-4 py-2"><input type="text" value="${escapeHtml(inv.code || '')}" data-field="code" data-id="${inv.id}" class="w-full border border-gray-200 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-300"></td>
+                <td class="px-4 py-2"><input type="text" value="${escapeHtml(inv.number || '')}" data-field="number" data-id="${inv.id}" class="w-full border border-gray-200 rounded px-2 py-1 text-sm"></td>
+                <td class="px-4 py-2"><input type="number" step="0.01" value="${(inv.amount || 0).toFixed(2)}" data-field="amount" data-id="${inv.id}" class="w-28 border border-gray-200 rounded px-2 py-1 text-sm"></td>
+                <td class="px-4 py-2"><input type="number" step="0.01" value="${(inv.tax || 0).toFixed(2)}" data-field="tax" data-id="${inv.id}" class="w-28 border border-gray-200 rounded px-2 py-1 text-sm"></td>
+                <td class="px-4 py-2"><input type="text" value="${escapeHtml(inv.date || '')}" placeholder="2024-01-01" data-field="date" data-id="${inv.id}" class="w-32 border border-gray-200 rounded px-2 py-1 text-sm"></td>
+                <td class="px-4 py-2">
+                    <select data-field="type" data-id="${inv.id}" class="border border-gray-200 rounded px-2 py-1 text-sm bg-white">
+                        <option value="增值税专用发票" ${inv.type === '增值税专用发票' ? 'selected' : ''}>增值税专用发票</option>
+                        <option value="增值税普通发票" ${inv.type === '增值税普通发票' ? 'selected' : ''}>增值税普通发票</option>
+                        <option value="其他" ${inv.type === '其他' ? 'selected' : ''}>其他</option>
+                    </select>
+                </td>
+                <td class="px-4 py-2 text-center">
+                    <button class="delete-btn text-red-500 hover:text-red-700 transition" data-id="${inv.id}"><i class="fas fa-trash-alt"></i></button>
+                </td>
+            </tr>
+        `).join('');
+        
+        // 绑定编辑事件 (input/change)
+        document.querySelectorAll('input[data-field], select[data-field]').forEach(el => {
+            el.removeEventListener('change', handleFieldChange);
+            el.removeEventListener('input', handleFieldChange);
+            if (el.tagName === 'SELECT') {
+                el.addEventListener('change', handleFieldChange);
+            } else {
+                el.addEventListener('input', handleFieldChange);
+            }
+        });
+        // 绑定删除事件
+        document.querySelectorAll('.delete-btn').forEach(btn => {
+            btn.removeEventListener('click', handleDelete);
+            btn.addEventListener('click', handleDelete);
+        });
+    }
+    
+    function handleFieldChange(e) {
+        const target = e.target;
+        const id = parseInt(target.dataset.id);
+        const field = target.dataset.field;
+        let newValue = target.value;
+        const invoice = invoices.find(inv => inv.id === id);
+        if (invoice) {
+            if (field === 'amount' || field === 'tax') {
+                let num = parseFloat(newValue);
+                if (isNaN(num)) num = 0;
+                invoice[field] = num;
+            } else {
+                invoice[field] = newValue;
+            }
+            refreshAll();
+        }
+    }
+    
+    function handleDelete(e) {
+        const btn = e.currentTarget;
+        const id = parseInt(btn.dataset.id);
+        invoices = invoices.filter(inv => inv.id !== id);
+        refreshAll();
+    }
+    
+    // 新增手动发票
+    function addManualInvoice() {
+        const newId = nextId++;
+        invoices.push({
+            id: newId,
+            code: '新代码',
+            number: '新号码',
+            amount: 0,
+            tax: 0,
+            date: new Date().toISOString().slice(0,10),
+            type: '增值税普通发票'
+        });
+        refreshAll();
+    }
+    
+    // 导出Excel
+    function exportToExcel() {
+        if (!invoices.length) {
+            alert("暂无发票数据，无法导出");
+            return;
+        }
+        const sheetData = invoices.map(inv => ({
+            '发票代码': inv.code || '',
+            '发票号码': inv.number || '',
+            '金额(元)': inv.amount,
+            '税额(元)': inv.tax,
+            '开票日期': inv.date || '',
+            '发票类型': inv.type || ''
+        }));
+        const ws = XLSX.utils.json_to_sheet(sheetData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "发票明细");
+        XLSX.writeFile(wb, `发票数据_${new Date().toISOString().slice(0,19)}.xlsx`);
+    }
+    
+    // 模拟样例数据 (展示多发票合并分类)
+    function loadMockData() {
+        if (invoices.length && confirm("示例数据将替换当前所有发票，确定吗？")) {
+            invoices = [];
+        } else if (invoices.length) return;
+        invoices = [
+            { id: nextId++, code: '031001900111', number: '12345678', amount: 12500.00, tax: 725.66, date: '2025-01-15', type: '增值税专用发票' },
+            { id: nextId++, code: '044001700222', number: '87654321', amount: 5300.00, tax: 307.96, date: '2025-02-20', type: '增值税普通发票' },
+            { id: nextId++, code: '031001900333', number: '11223344', amount: 8900.00, tax: 516.50, date: '2025-02-10', type: '增值税专用发票' },
+            { id: nextId++, code: '055001800444', number: '99887766', amount: 3200.00, tax: 185.85, date: '2025-03-05', type: '增值税普通发票' },
+            { id: nextId++, code: '067002200555', number: '55667788', amount: 21000.00, tax: 1218.00, date: '2025-03-18', type: '增值税专用发票' },
+            { id: nextId++, code: '078003300666', number: '44332211', amount: 760.00, tax: 44.08, date: '2025-01-28', type: '其他' }
+        ];
+        refreshAll();
+    }
+    
+    // ---------- OCR 核心: 多图片识别 + 字段提取 ----------
+    async function recognizeInvoices(files) {
+        if (!files.length) return;
+        const progressDiv = document.getElementById('ocrProgressContainer');
+        const progressBar = document.getElementById('ocrProgressBar');
+        const progressText = document.getElementById('ocrProgressText');
+        const statusP = document.getElementById('processingStatus');
+        progressDiv.classList.remove('hidden');
+        let completed = 0;
+        const total = files.length;
+        
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            statusP.innerText = `正在识别: ${file.name} ...`;
+            try {
+                const imageUrl = URL.createObjectURL(file);
+                // 使用 Tesseract 识别中英文 + 中文简体
+                const worker = await Tesseract.createWorker('chi_sim+eng');
+                const ret = await worker.recognize(imageUrl);
+                const text = ret.data.text;
+                await worker.terminate();
+                URL.revokeObjectURL(imageUrl);
+                const extracted = parseInvoiceText(text);
+                // 生成新发票记录
+                const newId = nextId++;
+                invoices.push({
+                    id: newId,
+                    code: extracted.code || '识别待修',
+                    number: extracted.number || '识别待修',
+                    amount: extracted.amount,
+                    tax: extracted.tax,
+                    date: extracted.date,
+                    type: extracted.type,
+                    rawText: text.substring(0,200)
+                });
+            } catch (err) {
+                console.error(`识别失败 ${file.name}:`, err);
+                statusP.innerText = `识别出错 ${file.name}, 手动添加占位`;
+                const newId = nextId++;
+                invoices.push({
+                    id: newId,
+                    code: '识别失败',
+                    number: 'ERROR',
+                    amount: 0,
+                    tax: 0,
+                    date: '',
+                    type: '其他'
+                });
+            }
+            completed++;
+            const percent = (completed / total) * 100;
+            progressBar.style.width = `${percent}%`;
+            progressText.innerText = `${Math.round(percent)}%`;
+            refreshAll(); // 逐步刷新表格
+        }
+        statusP.innerText = `✅ 识别完成！共识别 ${total} 张发票，请核对表格内容并支持编辑修正。`;
+        setTimeout(() => {
+            progressDiv.classList.add('hidden');
+            progressBar.style.width = '0%';
+        }, 2000);
+    }
+    
+    // 发票文本解析 (模拟常用字段提取, 用户可手动修正)
+    function parseInvoiceText(text) {
+        if (!text) return { code: '', number: '', amount: 0, tax: 0, date: '', type: '其他' };
+        let code = '';
+        let number = '';
+        let amount = 0;
+        let tax = 0;
+        let date = '';
+        let type = '其他';
+        
+        // 发票类型关键词
+        if (text.includes('增值税专用发票') || text.includes('专用发票')) type = '增值税专用发票';
+        else if (text.includes('增值税普通发票') || text.includes('普通发票')) type = '增值税普通发票';
+        
+        // 发票代码 (常见模式: 10-12位数字)
+        const codeMatch = text.match(/发票代码[:\s]*(\d{8,12})/i) || text.match(/代码[:\s]*(\d{8,12})/i);
+        if (codeMatch) code = codeMatch[1];
+        // 发票号码
+        const numMatch = text.match(/发票号码[:\s]*(\d{8,10})/i) || text.match(/号码[:\s]*(\d{8,10})/i);
+        if (numMatch) number = numMatch[1];
+        // 金额 (价税合计/合计金额/小写)
+        let amountMatch = text.match(/价税合计[^\d]*(\d+(?:\.\d{1,2})?)/i);
+        if (!amountMatch) amountMatch = text.match(/合计金额[^\d]*(\d+(?:\.\d{1,2})?)/i);
+        if (!amountMatch) amountMatch = text.match(/小写[^\d]*(\d+(?:\.\d{1,2})?)/i);
+        if (amountMatch) amount = parseFloat(amountMatch[1]) || 0;
+        // 税额
+        let taxMatch = text.match(/税额[^\d]*(\d+(?:\.\d{1,2})?)/i);
+        if (taxMatch) tax = parseFloat(taxMatch[1]) || 0;
+        // 日期
+        const dateMatch = text.match(/(\d{4}[-年]\d{1,2}[-月]\d{1,2})/);
+        if (dateMatch) {
+            let rawDate = dateMatch[1];
+            date = rawDate.replace('年','-').replace('月','-').replace(/[^0-9-]/g, '');
+            if (date.split('-').length === 3) date = date;
+            else date = '';
+        }
+        if (amount === 0) { // 二次尝试: 寻找数字较大可能是总金额
+            const allNumbers = text.match(/(\d+(?:\.\d{2})?)/g);
+            if (allNumbers) {
+                let maxNum = 0;
+                for (let n of allNumbers) {
+                    let val = parseFloat(n);
+                    if (val > 10 && val < 1000000 && val > maxNum) maxNum = val;
+                }
+                if (maxNum > 0) amount = maxNum;
+            }
+        }
+        return { code, number, amount, tax, date, type };
+    }
+    
+    // 上传及拖拽事件
+    function setupUpload() {
+        const uploadBtn = document.getElementById('uploadBtn');
+        const fileInput = document.getElementById('fileInput');
+        const dropZone = document.getElementById('dropZone');
+        uploadBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) recognizeInvoices(Array.from(e.target.files));
+            fileInput.value = '';
+        });
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500', 'bg-blue-50'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('border-blue-500', 'bg-blue-50'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('border-blue-500', 'bg-blue-50');
+            const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+            if (files.length) recognizeInvoices(files);
+            else alert("请拖拽图片文件(jpg/png)");
+        });
+    }
+    
+    // 辅助转义html
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
+    
+    // 初始化图表
+    function initCharts() {
+        const pieDom = document.getElementById('pieChart');
+        const lineDom = document.getElementById('lineChart');
+        pieChartInstance = echarts.init(pieDom);
+        lineChartInstance = echarts.init(lineDom);
+        pieChartInstance.setOption({
+            tooltip: { trigger: 'item' },
+            legend: { top: 'bottom' },
+            series: [{ type: 'pie', radius: '55%', data: [], label: { show: true }, emphasis: { scale: true } }]
+        });
+        lineChartInstance.setOption({
+            tooltip: { trigger: 'axis' },
+            xAxis: { type: 'category', name: '月份' },
+            yAxis: { type: 'value', name: '金额(元)' },
+            series: [{ type: 'line', smooth: true, lineStyle: { color: '#3b82f6', width: 3 }, areaStyle: { opacity: 0.1 } }]
+        });
+        updateStatsAndCharts();
+    }
+    
+    // 页面启动
+    window.addEventListener('DOMContentLoaded', () => {
+        setupUpload();
+        document.getElementById('exportExcelBtn').addEventListener('click', exportToExcel);
+        document.getElementById('addMockDataBtn').addEventListener('click', loadMockData);
+        document.getElementById('addNewInvoiceBtn').addEventListener('click', addManualInvoice);
+        initCharts();
+        // 空数据默认展示空表格提示
+        refreshAll();
+    });
+</script>
+</body>
+</html>
